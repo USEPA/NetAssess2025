@@ -1,0 +1,43 @@
+---
+title: "Ambient Air Monitoring Network Assessment Tools"
+project_id: "NetAssess2025"
+project_type: "application"
+description: "The NetAssess2025 app is meant to assist State, Local and Tribal air monitoring agencies with the 5-year Ambient Air Monitoring Network Assessments as required by 40 CFR §58.10(d)."
+
+url: "https://rconnect-public.epa.gov/NetAssess2025/"
+status: "active"
+created: "2024-08-09"
+last_updated: "2026-11-05"
+
+owner:
+  name: "Ben Wells"
+  organization: "US EPA"
+  contact: "wells.benjamin@epa.gov"
+  github: "bentwells"
+
+maintainers: "Ben Wells"
+
+repository:
+  url: "https://github.com/USEPA/NetAssess2025/"
+  license: ""
+
+software:
+  languages: "R"
+  dependencies: ["data.table","deldir","plyr","reshape2","RSQLite","sf","stringr","shiny"]
+  environment: "DMAP public and staging servers"
+
+data:
+  sources: "AQS"
+  access_notes: "Uses AQS data stored in a static database file. Data refresh is done externally."
+  classification: "public"
+
+outputs:
+  files: "netassess.sqlite"
+  description: "Primary data file used in the NetAssess2025 app"
+
+documentation:
+  readme: "README.md"
+  additional_files: ""
+
+notes: "See README.md for details"
+  
