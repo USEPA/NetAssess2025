@@ -1,0 +1,8 @@
+# Primary data file
+netassess.zip
+
+# Local credentials
+.Renviron
+
+# Metadata file
+metadata.yaml

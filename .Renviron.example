@@ -1,0 +1,18 @@
+# Required to retrieve concentration data through the AQS API.
+# Note that these variables do not need to be set in a local .Renviron 
+# if they are already in your global ~/.Renviron file. 
+AQS_API_USER=""
+AQS_API_KEY=""
+
+# Public app only: owner/namespace of the EE_DVcalc_AQSdata pin.
+app_owner=""
+
+# Staging-only deployment settings for deploy.R.
+CONNECT_STAGING_SERVER=""
+CONNECT_STAGING_ACCOUNT=""
+CONNECT_STAGING_API_KEY=""
+
+# Data refresh report only: direct AQS database credentials.
+# These are not needed to run or publish the Shiny app.
+AQS_userid=""
+AQS_passwd=""

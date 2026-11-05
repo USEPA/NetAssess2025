@@ -22,8 +22,8 @@ shinyServer(function(input,output,session) {
       site_id="",site_name=unlist(lapply(input$newSites,function(x) x$name)),
       address="New Site",latitude=unlist(lapply(input$newSites,function(x) x$lat)),
       longitude=unlist(lapply(input$newSites,function(x) x$lng)))
-    coord <- SpatialPoints(ns[,c("longitude","latitude")])
-    cty <- over(coord,counties)
+    coord <- st_sfc(st_multipoint(as.matrix(ns[,c("longitude","latitude")])),crs=4326)
+    cty <- counties[unlist(st_within(coord,counties)),]
     st <- dbGetQuery(db,"SELECT * FROM states")
     st.ind <- match(substr(cty$code,1,2),st$code)
     ns$epa_region <- st$epa_region[st.ind]
@@ -90,8 +90,8 @@ shinyServer(function(input,output,session) {
   ## Area of Interest
   areaOfInterest <- reactive({
     aoi <- lapply(input$areaOfInterest,function(x) t(matrix(unlist(x),nrow=2)))
-    poly <- lapply(aoi,function(x) Polygon(coords=rbind(x,x[1,])[,c(2,1)],hole=FALSE))
-    polygons <- SpatialPolygons(list(Polygons(poly,"aoi")))
+    poly <- lapply(aoi,function(x) st_polygon(list(rbind(x,x[1,])[,c(2,1)])))
+    polygons <- st_sf(geometry=st_sfc(st_multipolygon(poly),crs=4326))
     return(polygons)
   })
   
@@ -109,7 +109,7 @@ shinyServer(function(input,output,session) {
     if (is.null(input$areaSelectSelect)) { return() }
     if (input$areaSelectSelect == "") { return() }
     type <- paste(tolower(isolate(input$areaSelect)),"s",sep="")
-    q <- paste0("SELECT geometry FROM ",type," WHERE code = '",input$areaSelectSelect,"'")
+    q <- paste("SELECT geometry FROM ",type," WHERE code = '",input$areaSelectSelect,"'",sep="")
     coords <- eval(parse(text=dbGetQuery(db,q)[1,1]))
     session$sendCustomMessage(type="displayPredefinedArea",
       list(properties=list(name="test",type=type,id=input$areaSelectSelect),coords=coords))
@@ -173,47 +173,45 @@ shinyServer(function(input,output,session) {
     if (is.null(input$areaServedClipping)) { return() }
     if (input$areaServedClipping == "border") { b <- usborder }
     if (input$areaServedClipping == "aoi") { b <- areaOfInterest() }
-    points <- SpatialPointsDataFrame(list(sn$longitude,sn$latitude),data.frame(key=sn$key))
-    bb <- bbox(rbind(t(bbox(b)),t(bbox(points))))
-    tiles <- tile.list(deldir(points@coords[,1],points@coords[,2],rw=as.numeric(t(bb))))
-    polys <- vector(mode="list",length=length(tiles))
-    for (i in 1:length(tiles)) {
-      tile.coord <- cbind(tiles[[i]]$x,tiles[[i]]$y)
-      tile.coord <- rbind(tile.coord,tile.coord[1,])
-      polys[[i]] <- Polygons(list(Polygon(tile.coord)),ID=sn$key[i])
-    }
-    polys <- gIntersection(SpatialPolygons(polys),b,byid=TRUE)
-    poly.ids <- sapply(slot(polys,"polygons"),function(x) slot(x,"ID"))
-    poly.keys <- as.numeric(sapply(poly.ids,function(x) unlist(strsplit(x," "))[1]))
-    points <- points[points$key %in% poly.keys,]
-    voronoi <- SpatialPolygonsDataFrame(polys,data=data.frame(id=poly.keys,
-      pnt_x=points@coords[,1],pnt_y=points@coords[,2],row.names=poly.ids))
-    v <- subset(voronoi,id %in% ss$key)
-    ov <- over(tracts,v)
-    t <- cbind(tracts@data,ov)
-    t <- t[!is.na(t$id),]
-    d <- apply(t[,c(grep("area",colnames(t)),grep("integer",lapply(t,class)))],2,
-      function(x) tapply(x,list(t$id),function(y) round(sum(y,na.rm=TRUE))))
-    d <- data.frame(id=rownames(d),d,
-      ozone_prob=round(100*tapply(t$ozone_prob,list(t$id),mean),1),
-      d2_ozone=round(tapply(t$d2_ozone,list(t$id),mean),1),
-      p_d2_ozone=round(tapply(t$p_d2_ozone,list(t$id),mean)),
-      pm25_prob=round(100*tapply(t$pm25_prob,list(t$id),mean),1),
-      d2_pm25=round(tapply(t$d2_pm25,list(t$id),mean),1),
-      p_d2_pm25=round(tapply(t$p_d2_pm25,list(t$id),mean)))
-    v@data <- merge(v@data,d,by="id",all.x=TRUE,all.y=FALSE)
+    points <- st_as_sf(sn,coords=c("longitude","latitude"),crs=4326)
+    bb <- st_bbox(st_union(st_as_sfc(st_bbox(b)),st_as_sfc(st_bbox(points))))
+    tiles <- tile.list(deldir(x=sn$longitude,y=sn$latitude,rw=bb[c(1,3,2,4)]))
+    polys <- st_intersection(st_make_valid(subset(st_sf(sn,geometry=st_sfc(lapply(tiles,function(t)
+      st_polygon(list(matrix(c(t$x[c(1:length(t$x),1)],t$y[c(1:length(t$y),1)]),ncol=2)))),
+      crs=4326)),key %in% ss$key)),st_make_valid(b))
+    ind <- st_within(tracts,polys)
+    t <- tracts[which(sapply(ind,length) > 0),]
+    sum.cols <- c(grep("area",colnames(t)),grep("integer",lapply(t,class)))
+    avg.cols <- c("ozone_prob","pm25_prob","no2_sat")
+    t$key <- st_drop_geometry(polys)$key[unlist(ind)]
+    d <- cbind(apply(st_drop_geometry(t)[,sum.cols],2,function(x) 
+      tapply(x,list(t$key),function(y) round(sum(y,na.rm=TRUE)))),
+      apply(st_drop_geometry(t)[,avg.cols],2,function(x)
+      tapply(x,list(t$key),function(y) round(mean(y),1))))
+    v <- merge(polys,d,by.x="key",by.y="row.names",all.x=TRUE,all.y=FALSE)
     return(v)
   })
   
   observeEvent(input$areaServedButton,{
     if(is.null(polygons())) { return() }
-    polygons <- polygons()
-    v <- lapply(seq(nrow(polygons)),function(i) {
-      list(id=unlist(strsplit(polygons@polygons[[i]]@ID," "))[1], 
-        coords=lapply(polygons@polygons[[i]]@Polygons,function(pp) {
-          apply(pp@coords,1,function(r) list(lat=r[[2]],lng=r[[1]]))
-    }))})
-    session$sendCustomMessage(type="updateAreaServed",v)
+    poly <- polygons()
+    coord <- st_coordinates(poly)
+    coord <- coord[which(coord[,"L1"] == 1),]
+    if (ncol(coord) == 4) {
+      p <- lapply(seq(nrow(poly)),function(i) {
+        list(id=poly$key[i],coords=apply(coord[which(coord[,"L2"] == i),],1,
+          function(r) list(lat=r[[2]],lng=r[[1]])))
+      })
+    }
+    if (ncol(coord) == 5) {
+      N <- tapply(coord[,"L2"],list(coord[,"L3"]),max)
+      p <- lapply(seq(nrow(poly)),function(i) {
+        list(id=poly$key[i],coords=lapply(seq(N[i]),function(j) {
+          apply(coord[which(coord[,"L3"] == i & coord[,"L2"] == j),],1,
+          function(r) list(lat=r[[2]],lng=r[[1]]))
+      }))})
+    }
+    session$sendCustomMessage(type="updateAreaServed",p)
   })
   
   output$areaServedPollutant <- renderText({
@@ -238,7 +236,7 @@ shinyServer(function(input,output,session) {
     if (is.null(input$clickedAreaServed)) { return() }
     poly <- polygons()
     if (is.null(poly)) { return() }
-    area.km <- as.numeric(poly@data$area[poly@data$id == input$clickedAreaServed])
+    area.km <- as.numeric(poly$area_km[poly$key == input$clickedAreaServed])
     return(paste(format(round(area.km*0.3861,0),big.mark=",")," mi<sup>2</sup> (",
       format(area.km,big.mark=",")," km<sup>2</sup>)",sep=""))
   })
@@ -247,24 +245,22 @@ shinyServer(function(input,output,session) {
     if (is.null(input$clickedAreaServed)) { return() }
     poly <- polygons()
     if(is.null(poly)) { return() }
-    return(format(poly@data$total[poly@data$id == input$clickedAreaServed],big.mark=","))
+    return(format(poly$total[poly$key == input$clickedAreaServed],big.mark=","))
   })
   
   output$areaServedDemographics <- renderPlot({
     if (is.null(input$clickedAreaServed)) { return() }
-    poly <- as.numeric(input$clickedAreaServed)
+    poly <- as.integer(input$clickedAreaServed)
     if (is.null(selectedSites())) { return() }
     if (!(poly %in% selectedSites()$key)) { return() }
-    df <- as.data.frame(polygons()@data)
+    df <- subset(st_drop_geometry(polygons()),key == poly)
     if (nrow(df) == 0) { return() }
-    ss <- selectedSites()
-    id <- ss$site_id[ss$key %in% poly][1]
-    site.id <- paste("Site",paste(substr(id,1,2),substr(id,3,5),substr(id,6,9),sep="-"))
+    site.id <- paste("Site",paste(substr(df$site_id,1,2),substr(df$site_id,3,5),substr(df$site_id,6,9),sep="-"))
     pop.cols <- c("male","female","white","black","native","asian","islander","other","multiple","hispanic",
       "age_0_4","age_5_9","age_10_14","age_15_19","age_20_24","age_25_29","age_30_34","age_35_39","age_40_44",
       "age_45_49","age_50_54","age_55_59","age_60_64","age_65_69","age_70_74","age_75_79","age_80_84","age_85_up")
     colors <- c(rep("cyan",2),rep("magenta",8),rep("yellow",18))
-    bar.hgts <- unlist(df[which(df$id == input$clickedAreaServed),pop.cols])
+    bar.hgts <- unlist(df[,pop.cols])
     ymax <- 10000*ceiling(max(c(bar.hgts,10000),na.rm=TRUE)/10000)
     yspace <- 10^floor(log(ymax,base=10))/ifelse(substr(ymax,1,1) > 5,1,ifelse(substr(ymax,1,1) > 2,2,5))
     ymax <- ymax + yspace/2
@@ -293,81 +289,103 @@ shinyServer(function(input,output,session) {
       "SELECT annual.pollutant AS poll,
               sites.site_id AS site_id,
               annual.year AS year,
-              annual.value AS annual_value
+              annual.value AS annual_value,
+              annual.valid AS annual_valid
          FROM annual, sites
         WHERE annual.key = ",site,"
-          AND annual.pollutant ",switch(poll,pm25="IN ('pm25a','pm25d')",paste("= '",poll,"'",sep="")),"
+          AND annual.pollutant LIKE '",poll,"%'
           AND sites.key = ",site,sep=""))
     dv.data <- dbGetQuery(db,paste(
       "SELECT dvs.pollutant AS poll,
               sites.site_id AS site_id,
               dvs.year AS year,
-              dvs.value AS design_value
+              dvs.value AS design_value,
+              dvs.valid AS design_valid
          FROM dvs, sites
         WHERE dvs.key = ",site,"
-          AND dvs.pollutant ",switch(poll,pm25="IN ('pm25a','pm25d')",paste("= '",poll,"'",sep="")),"
-          AND dvs.valid = 'Y'
+          AND dvs.pollutant LIKE '",poll,"%'
           AND sites.key = ",site,sep=""))
+    curr.psids <- c(2,3,4,8,12,19,20,23,26,27,28)
     site.id <- as.character(dbGetQuery(db,paste("SELECT site_id FROM sites WHERE key =",site,sep="")))
-    site.id <- paste(substr(site.id,1,2),substr(site.id,3,5),substr(site.id,6,9),sep="-")
-    std <- dbGetQuery(db,paste(
+    aqs.site.id <- paste(substr(site.id,1,2),substr(site.id,3,5),substr(site.id,6,9),sep="-")
+    naaqs <- dbGetQuery(db,paste(
       "SELECT poll_name, avg_time, level, units 
          FROM standards
         WHERE pollutant = '",poll,"'
-          AND year = ",switch(poll,co=1971,lead=2009,no2=2010,ozone=2015,pm10=2006,pm25=2024,so2=2010),sep=""))
-    if (poll %in% c("co","lead")) { std <- std[2,] }
+          AND ps_id IN (",paste(curr.psids,collapse=","),")
+     ORDER BY avg_time",sep=""))
+    naaqs$std_lab <- naaqs$poll_name
+    if (nrow(naaqs) > 1) { naaqs$std_lab <- paste(str_to_title(naaqs$avg_time),naaqs$std_lab) }
+    if (poll == "pm25") { naaqs <- naaqs[c(2,1),] }
     curr.year <- max(dbGetQuery(db,"SELECT DISTINCT year FROM annual"))
     max.na <- function(x) { return(ifelse(all(is.na(x)),NA,max(x,na.rm=TRUE))) }
-    ymax <- pmax(1.2*max.na(annual.data$annual_value),1.2*max.na(dv.data$design_value),1.2*max(std$level),na.rm=TRUE)
-    file.name <- paste("images/temp/trend_",site,poll,".png",sep="")
+    ymax <- pmax(1.2*max.na(annual.data$annual_value),1.2*max.na(dv.data$design_value),
+      1.2*ifelse(poll == "co",9,max(naaqs$level)),na.rm=TRUE)
+    annual.data <- split(annual.data,annual.data$poll)
+    dv.data <- split(dv.data,dv.data$poll)
+    file.name <- paste("images/temp/trend_",poll,"_",site.id,".png",sep="")
     png(filename=paste("www",file.name,sep="/"),width=1200,height=900)
-    par(mar=c(6,6,2,1),mgp=c(4.5,1,0),cex.axis=2,cex.lab=2,cex.main=2,las=2)
-    plot(x=NULL,y=NULL,type='n',xaxs='i',xaxt='n',xlim=c(1999.8,(curr.year+0.2)),xlab="",
-      yaxs='i',ylim=c(0,ymax),ylab=paste("Concentration (",std$units[1],")",sep=""),
-      main=paste(ifelse(poll == "pm25","",std$avg_time),std$poll_name[1],
-        "Trend for AQS Site ID =",site.id))
+    par(mar=c(4,5,2,1),mgp=c(3.75,1,0),cex.axis=1.5,cex.lab=1.5,cex.main=2,las=2)
+    plot(x=NULL,y=NULL,type='n',xaxs='i',xaxt='n',xlim=c(1999.5,(curr.year+0.5)),xlab="",
+      yaxs='i',ylim=c(0,ymax),ylab=paste("Concentration (",naaqs$units[1],")",sep=""),
+      main=paste(naaqs$poll_name[1],"Trends for AQS Site ID =",aqs.site.id))
     axis(side=1,at=c(2000:curr.year),labels=c(2000:curr.year))
-    rect(xleft=1999.8,xright=(curr.year+0.2),ybottom=0,ytop=ymax,col="gray85")
-    abline(h=seq(par("yaxp")[1],par("yaxp")[2],length.out=(par("yaxp")[3]+1)),col="white")
-    abline(h=std$level[1],lty=1,lwd=2,col="black"); box();
-    legend.args <- data.frame(col="black",lty=1,pch=NA,legend="NAAQS Level")
-    if (poll == "pm25") {
-      legend.args$legend <- "24-hour NAAQS Level"
-      abline(h=std$level[2],lty=2,lwd=2,col="black")
-      legend.args <- rbind(legend.args,
-        data.frame(col="black",lty=2,pch=NA,legend="Annual NAAQS Level"))
-      t1 <- subset(annual.data,poll == "pm25d")
-      t2 <- subset(dv.data,poll == "pm25d")
-      if (nrow(t1) > 0) {
-        lines(x=t1$year,y=t1$annual_value,lty=2,lwd=2,col="red")
-        points(x=t1$year,y=t1$annual_value,pch=15,cex=1.5,col="red")
-        legend.args <- rbind(legend.args,
-          data.frame(col="red",lty=2,pch=15,legend="Annual 98th Percentile"))
-      }
-      if (nrow(t2) > 0) {
-        lines(x=t2$year,y=t2$design_value,lty=1,lwd=2,col="red")
-        points(x=t2$year,y=t2$design_value,pch=16,cex=1.5,col="red")
-        legend.args <- rbind(legend.args,
-          data.frame(col="red",lty=1,pch=16,legend="24-hour Design Value"))
-      }
-      annual.data <- subset(annual.data,poll == "pm25a")
-      dv.data <- subset(dv.data,poll == "pm25a")
+    rect(xleft=1999.5,xright=(curr.year+0.5),ybottom=0,ytop=ymax,col="gray80")
+    abline(h=seq(par("yaxp")[1],par("yaxp")[2],length.out=(par("yaxp")[3]*2+1)),
+      v=c(2000:curr.year),col="white")
+    abline(h=naaqs$level[1],lty=1,lwd=2,col="black"); box();
+    if (nrow(naaqs) > 1) { abline(h=naaqs$level[2],lty=2,lwd=2,col="black") }
+    legend.args <- data.frame(col="black",lty=1,pch=NA,
+      legend=paste(naaqs$std_lab[1],"NAAQS Level"))
+    if (length(annual.data) == 1) { 
+      legend.args <- rbind(legend.args,data.frame(col=NA,lty=NA,pch=NA,legend="")) 
     }
-    if (poll != "lead" & nrow(annual.data) > 0) {
-      lines(x=annual.data$year,y=annual.data$annual_value,lty=2,lwd=2,col="blue")
-      points(x=annual.data$year,y=annual.data$annual_value,pch=15,cex=1.5,col="blue")
-      legend.args <- rbind(legend.args,data.frame(col="blue",lty=2,pch=15,
-        legend=paste("Annual",switch(poll,co="2nd Maximum",no2="98th Percentile",
-        ozone="4th Maximum",pm10="2nd Maximum",pm25="Mean",so2="99th Percentile"))))
+    if (length(annual.data) > 1) { 
+      legend.args <- rbind(legend.args,data.frame(col=c("black",NA,NA),lty=c(2,NA,NA),pch=NA,
+        legend=c(paste(naaqs$std_lab[2],"NAAQS Level"),"","")))
+    }   
+    ann <- annual.data[[1]]; dv <- dv.data[[1]];
+    if (nrow(ann) > 0) {
+      pt.pch <- sapply(ann$annual_valid,switch,N=22,Y=15)
+      lines(x=ann$year,y=ann$annual_value,lty=2,lwd=2,col="blue")
+      points(x=ann$year,y=ann$annual_value,cex=2,col="blue",pch=pt.pch)
+      legend.args <- rbind(legend.args,data.frame(col=rep("blue",2),lty=rep(2,2),pch=c(15,22),
+        legend=paste(c("Valid","Invalid"),"Annual",switch(poll,co="2nd Max 1-hour",lead="Max 3-month",
+          no2="98th Percentile",ozone="4th Maximum",pm10="2nd Maximum",pm25="Mean",so2="99th Percentile"))))
     }
-    if (poll != "co" & nrow(dv.data) > 0) {
-      lines(x=dv.data$year,y=dv.data$design_value,lty=1,lwd=2,col="blue")
-      points(x=dv.data$year,y=dv.data$design_value,pch=16,cex=1.5,col="blue")
-      legend.args <- rbind(legend.args,data.frame(col="blue",lty=1,pch=16,
-        legend=paste(ifelse(poll == "pm25","Annual ",""),"Design Value",sep="")))
+    if (nrow(dv) > 0) {
+      pt.pch <- sapply(dv$design_valid,switch,N=21,Y=16)
+      lines(x=dv$year,y=dv$design_value,lty=1,lwd=2,col="blue")
+      points(x=dv$year,y=dv$design_value,cex=2,col="blue",pch=pt.pch)
+      legend.args <- rbind(legend.args,data.frame(col=rep("blue",2),lty=rep(1,2),pch=c(16,21),
+        legend=paste(c("Valid","Invalid"),naaqs$std_lab[1],"Design",ifelse(poll == "pm10",
+          "Concentration","Value"))))
+    }
+    if (length(annual.data) > 1) {
+      ann <- annual.data[[2]]; dv <- dv.data[[2]];
+      if (nrow(ann) > 0 & poll != "no2") {
+        pt.pch <- sapply(ann$annual_valid,switch,N=22,Y=15)
+        lines(x=ann$year,y=ann$annual_value,lty=2,lwd=2,col="red")
+        points(x=ann$year,y=ann$annual_value,cex=2,col="red",pch=pt.pch)
+        legend.args <- rbind(legend.args,data.frame(col=rep("red",2),lty=rep(2,2),pch=c(15,22),
+          legend=paste(c("Valid","Invalid"),"Annual",switch(poll,co="2nd Max 8-hour",
+            no2="Mean",pm25="98th Percentile",so2="Mean"))))
+      }
+      if (nrow(dv) > 0) {
+        pt.pch <- sapply(dv$design_valid,switch,N=21,Y=16)
+        lines(x=dv$year,y=dv$design_value,lty=1,lwd=2,col="red")
+        points(x=dv$year,y=dv$design_value,cex=2,col="red",pch=pt.pch)
+        legend.args <- rbind(legend.args,data.frame(col=rep("red",2),lty=rep(1,2),pch=c(16,21),
+          legend=paste(c("Valid","Invalid"),naaqs$std_lab[2],"Design Value")))
+      }
+    }
+    if (poll == "co") { 
+      legend.args <- legend.args[-c(3,4,6,8,10,12),]
+      legend.args$legend <- gsub("Valid","",legend.args$legend)
+      if (ymax < 35) { legend.args$col[1] <- NA; legend.args$lty[1] <- NA; legend.args$legend[1] <- ""; }
     }
     legend(x="top",legend=legend.args$legend,col=legend.args$col,lty=legend.args$lty,
-      lwd=2,pch=legend.args$pch,cex=2,ncol=3,bty='n')
+      lwd=2,pch=legend.args$pch,cex=1.5,pt.cex=2,ncol=3,bty='n')
     dev.off()
     session$sendCustomMessage(type="updateTrendChart",file.name)
     return(list(src=file.name))
@@ -389,11 +407,10 @@ shinyServer(function(input,output,session) {
         AND sites.site_id IN ('",paste(sites$site_id,collapse="','"),"')
       ORDER BY 1,2",sep=""))
     if (nrow(conc) == 0) { hideLoading(); return(); }
-    sites <- subset(sites,site_id %in% unique(conc$site))
+    sites <- st_as_sf(subset(sites,site_id %in% unique(conc$site)),
+      coords=c("longitude","latitude"),crs=4326)
     mean.na <- function(x) { return(ifelse(all(is.na(x)),NA,mean(x,na.rm=TRUE))) }
-    lambert <- as.data.frame(spTransform(SpatialPoints(sites[c("longitude","latitude")],
-      proj4string=CRS("+proj=longlat")),CRS("+proj=lcc +lat_1=33n +lat_2=45n +lat_0=40 +lon_0=-97")))
-    dist.km <- round(rdist(lambert/1000))
+    dist.km <- round(st_distance(sites,sites)/1000); units(dist.km) <- NULL;
     values <- dcast(conc,date ~ site,value.var="conc")
     cor.val <- round(cor(values[,-1],use="pairwise.complete.obs",method="pearson"),4)
     cor.table <- vector("list",(nrow(sites)*(nrow(sites)-1)/2)); k <- 1;
@@ -468,7 +485,7 @@ shinyServer(function(input,output,session) {
       col.vals[upper.tri(col.vals)] <- sapply(cor.diff[upper.tri(cor.diff)],
         function(x) diff.col[as.integer(cut(x,breaks=diff.seq,right=FALSE))])
       layout(matrix(c(1,1,2,3,4,4),3,2),widths=c(0.9,0.1),heights=c(0.5,0.42,0.08))
-      par(mar=c(1,mar.axis,mar.axis,1),mgp=c(2,1,0),las=2,tcl=0,cex.axis=txt.cex)
+      par(mar=c(1,mar.axis,mar.axis,1),mgp=c(2,0.25,0),las=2,tcl=0,cex.axis=txt.cex)
       plot(x=NULL,y=NULL,type='n',axes=FALSE,xaxs='i',xlab="",xlim=c(0,N)+0.5,
         yaxs='i',ylab="",ylim=c(0,N)+0.5,main="")
       axis(side=2,at=N:1,labels=ids); axis(side=3,at=1:N,labels=ids);
@@ -517,7 +534,7 @@ shinyServer(function(input,output,session) {
     showLoading()
     conc <- dbGetQuery(db,paste("
       SELECT key, sample_date, value FROM daily
-       WHERE key IN ('",paste(sn$key,collapse="','"),"')
+       WHERE key IN (",paste(sn$key,collapse=","),")
          AND pollutant = '",input$pollutantSelect,"'
        ORDER BY 2,3",sep=""))
     sites <- subset(sites,key %in% unique(conc$key))
@@ -529,12 +546,11 @@ shinyServer(function(input,output,session) {
       hideLoading()
       return()
     }
-    lambert <- function(x) { return(spTransform(SpatialPoints(x,CRS("+proj=longlat")),
-      CRS("+proj=lcc +lat_1=33n +lat_2=45n +lat_0=40 +lon_0=-97"))) }
     combos <- deldir(sn$longitude,sn$latitude)$delsgs
-    combos$dist <- round(rdist.vec(x1=lambert(combos[,c("x1","y1")])@coords,
-      x2=lambert(combos[,c("x2","y2")])@coords)/1000,3)
+    combos$dist <- st_distance(st_as_sf(combos[,1:2],coords=c("x1","y1"),crs=4326),
+      st_as_sf(combos[,3:4],coords=c("x2","y2"),crs=4326),by_element=TRUE)/1000
     combos$ind1 <- sn$key[combos$ind1]; combos$ind2 <- sn$key[combos$ind2];
+    units(combos$dist) <- NULL
     bias.table <- lapply(sites$key,function(site) {
       site.id <- sites$site_id[which(sites$key == site)]
       site.data <- subset(conc,key == site,c("sample_date","value"))
@@ -619,26 +635,22 @@ shinyServer(function(input,output,session) {
   output$areaServedDownload <- downloadHandler(filename=function() {
     paste("areaserved_",input$pollutantSelect,"_",gsub("-","",gsub(":","",
       gsub(" ","_",round(Sys.time())))),".csv",sep="")},content=function(file) {
-    pop <- polygons()@data
-    sites <- selectedSites()
-    out <- merge(sites,pop,by.x="key",by.y="id",all=TRUE)
-    out <- out[,c("site_id","site_name","address","latitude","longitude",
+    t <- st_drop_geometry(polygons())
+    out <- t[,c("site_id","site_name","address","latitude","longitude",
       "epa_region","state_name","county_name","cbsa_name","csa_title","monitor_count",
-      "pollutants","area_km","ozone_prob","pm25_prob","total","male","female",
+      "pollutants","area_km","ozone_prob","pm25_prob","no2_sat","total","male","female",
       "white","black","native","asian","islander","other","multiple","hispanic",
       "age_0_4","age_5_9","age_10_14","age_15_19","age_20_24","age_25_29",
       "age_30_34","age_35_39","age_40_44","age_45_49","age_50_54","age_55_59",
-      "age_60_64","age_65_69","age_70_74","age_75_79","age_80_84","age_85_up",
-      "d2_ozone","p_d2_ozone","d2_pm25","p_d2_pm25")]
-    colnames(out) <- c("AQS Site ID","Site Name","Address","Latitude","Longitude",
-      "EPA Region","State Name","County Name","CBSA Name","CSA Name","Monitor Count","Pollutants",
-      "Area (km^2)","Ozone Exceedance Probability (%)","PM2.5 Exceedance Probability (%)",
+      "age_60_64","age_65_69","age_70_74","age_75_79","age_80_84","age_85_up")]
+    colnames(out) <- c("AQS Site ID","Site Name","Address","Latitude","Longitude","EPA Region",
+      "State Name","County Name","CBSA Name","CSA Name","Monitor Count","Pollutants","Area (km^2)",
+      "Ozone Exceedance Probability (%)","PM2.5 Exceedance Probability (%)","Annual Mean NO2 Concentration (ppb)",
       "Total Population","Male","Female","Caucasian/White","African/Black","Native American",
       "Asian","Pacific Islander","Other Race","Multiple Races","Hispanic/Latino",
       "Age 0 to 4","Age 5 to 9","Age 10 to 14","Age 15 to 19","Age 20 to 24","Age 25 to 29",
       "Age 30 to 34","Age 35 to 39","Age 40 to 44","Age 45 to 49","Age 50 to 54","Age 55 to 59",
-      "Age 60 to 64","Age 65 to 69","Age 70 to 74","Age 75 to 79","Age 80 to 84","Age 85 and Over",
-      "Ozone EJ Index","Ozone EJ Percentile","PM2.5 EJ Index","PM2.5 EJ Percentile")
+      "Age 60 to 64","Age 65 to 69","Age 70 to 74","Age 75 to 79","Age 80 to 84","Age 85 and Over")
       write.csv(out,file=file,row.names=FALSE,na="")                             
   })
   

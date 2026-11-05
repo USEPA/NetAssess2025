@@ -44,9 +44,7 @@ netAssess.basemaps = {
 
 netAssess.overlays = {
     o3: L.imageOverlay("images/ozone_prob.png",[[24.51748,-124.76255],[49.38436,-66.92599]],{opacity: 0.65}),
-  pm25: L.imageOverlay("images/pm25_prob.png",[[24.51748,-124.76255],[49.38436,-66.92599]],{opacity: 0.65}),
-  o3ej: L.imageOverlay("images/ozone_EJindex.png",[[24.51748,-124.76255],[49.38436,-66.92599]],{opacity: 0.65}),
-  pmej: L.imageOverlay("images/pm25_EJindex.png",[[24.51748,-124.76255],[49.38436,-66.92599]],{opacity: 0.65})
+  pm25: L.imageOverlay("images/pm25_prob.png",[[24.51748,-124.76255],[49.38436,-66.92599]],{opacity: 0.65})
 }
 
 netAssess.layerGroups = {}
@@ -230,8 +228,6 @@ L.control.layers(netAssess.basemaps,
    "Area Served": netAssess.layerGroups.areaServed,
    "Ozone Probability": netAssess.overlays.o3,
    "PM<sub>2.5</sub> Probability": netAssess.overlays.pm25,
-   "Ozone EJ Index": netAssess.overlays.o3ej,
-   "PM<sub>2.5</sub> EJ Index": netAssess.overlays.pmej,
    "Removal Bias": netAssess.layerGroups.rembias,
   }, {position: 'topleft'}).addTo(netAssess.map);
 
@@ -441,8 +437,6 @@ netAssess.toggleSidebars = function(sb) {
 netAssess.map.on("overlayadd",function(e) {
   if(e.name == "Ozone Probability" || e.name == "PM<sub>2.5</sub> Probability") {
     $("#probLegend").css("display","table-row");
-  } else if(e.name == "Ozone EJ Index" || e.name == "PM<sub>2.5</sub> EJ Index") {
-    $("#EJLegend").css("display","table-row");
   } else if(e.name == "Removal Bias") {
     $("#biasLegend").css("display","table-row");
   } else {
@@ -453,8 +447,6 @@ netAssess.map.on("overlayadd",function(e) {
 netAssess.map.on("overlayremove",function(e) {
   if(e.name == "Ozone Probability" || e.name == "PM<sub>2.5</sub> Probability") {
     $("#probLegend").css("display","none");
-  } else if(e.name == "Ozone EJ Index" || e.name == "PM<sub>2.5</sub> EJ Index") {
-    $("#EJLegend").css("display","none");
   } else if(e.name == "Removal Bias") {
     $("#biasLegend").css("display","none");
   }
@@ -530,8 +522,6 @@ netAssess.resetApp = function() {
   netAssess.layerGroups.rembias.clearLayers();
   netAssess.map.removeLayer(netAssess.overlays.o3);
   netAssess.map.removeLayer(netAssess.overlays.pm25);
-  netAssess.map.removeLayer(netAssess.overlays.o3ej);
-  netAssess.map.removeLayer(netAssess.overlays.pmej);
   netAssess.map.removeLayer(netAssess.layerGroups.rembias);
   netAssess.map.removeLayer(netAssess.layerGroups.aoi);
   netAssess.map.addLayer(netAssess.layerGroups.areaServed);
