@@ -182,7 +182,7 @@ shinyServer(function(input,output,session) {
     ind <- st_within(tracts,polys)
     t <- tracts[which(sapply(ind,length) > 0),]
     sum.cols <- c(grep("area",colnames(t)),grep("integer",lapply(t,class)))
-    avg.cols <- c("ozone_prob","pm25_prob","no2_sat")
+    avg.cols <- c("ozone_prob","pm25_prob")
     t$key <- st_drop_geometry(polys)$key[unlist(ind)]
     d <- cbind(apply(st_drop_geometry(t)[,sum.cols],2,function(x) 
       tapply(x,list(t$key),function(y) round(sum(y,na.rm=TRUE)))),
@@ -638,14 +638,14 @@ shinyServer(function(input,output,session) {
     t <- st_drop_geometry(polygons())
     out <- t[,c("site_id","site_name","address","latitude","longitude",
       "epa_region","state_name","county_name","cbsa_name","csa_title","monitor_count",
-      "pollutants","area_km","ozone_prob","pm25_prob","no2_sat","total","male","female",
+      "pollutants","area_km","ozone_prob","pm25_prob","total","male","female",
       "white","black","native","asian","islander","other","multiple","hispanic",
       "age_0_4","age_5_9","age_10_14","age_15_19","age_20_24","age_25_29",
       "age_30_34","age_35_39","age_40_44","age_45_49","age_50_54","age_55_59",
       "age_60_64","age_65_69","age_70_74","age_75_79","age_80_84","age_85_up")]
     colnames(out) <- c("AQS Site ID","Site Name","Address","Latitude","Longitude","EPA Region",
       "State Name","County Name","CBSA Name","CSA Name","Monitor Count","Pollutants","Area (km^2)",
-      "Ozone Exceedance Probability (%)","PM2.5 Exceedance Probability (%)","Annual Mean NO2 Concentration (ppb)",
+      "Ozone Exceedance Probability (%)","PM2.5 Exceedance Probability (%)",
       "Total Population","Male","Female","Caucasian/White","African/Black","Native American",
       "Asian","Pacific Islander","Other Race","Multiple Races","Hispanic/Latino",
       "Age 0 to 4","Age 5 to 9","Age 10 to 14","Age 15 to 19","Age 20 to 24","Age 25 to 29",

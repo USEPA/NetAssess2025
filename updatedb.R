@@ -1,7 +1,7 @@
 #################################################################
 ## Update SQL database for the monitoring network assessment tool
 ## Author: Ben Wells, Statistician, US EPA/OAQPS
-## Updated: August 6, 2025
+## Updated: November 12, 2026
 #################################################################
 if (dir.exists("C:/")) {
   source("C:/Users/bwells01/Documents/R/get_aqs_data.r")
@@ -113,7 +113,7 @@ dbWriteTable(db,name="counties",value=counties,row.names=FALSE,overwrite=TRUE)
 ##    Extract the .zip file to the current working 'data' directory
 ## c) Run below code to read, merge, and write the tract-level data to the database
 ########################################################################################
-update.population <- function(geo.file,pop.file,prob.file,no2.file) {
+update.population <- function(geo.file,pop.file,prob.file) {
   t <- read.delim(paste("data",geo.file,sep="/"),header=TRUE,
     colClasses=c(rep("character",2),rep("numeric",6)))
   geo <- data.frame(CTFIPS=t$GEOID,latitude=round(t$INTPTLAT,6),
@@ -133,18 +133,12 @@ update.population <- function(geo.file,pop.file,prob.file,no2.file) {
     age_60_64=as.integer(t[,16]),age_65_69=as.integer(t[,17]),age_70_74=as.integer(t[,18]),
     age_75_79=as.integer(t[,19]),age_80_84=as.integer(t[,20]),age_85_up=as.integer(t[,21]))
   load(paste("data",prob.file,sep="/"))
-  no2 <- subset(read.csv(paste("data",no2.file,sep="/"),colClasses=c("integer","character",
-    "numeric")),year == 2022,c("Ct_Fips","spmod_pred"))
-  colnames(no2) <- c("CTFIPS","no2_sat")
-  no2$no2_sat <- round(no2$no2_sat,2)
-  tracts <- merge(geo,merge(pop,merge(prob.out,no2,by="CTFIPS",all=TRUE),
-     by="CTFIPS",all=TRUE),by="CTFIPS",all=TRUE)
+  tracts <- merge(geo,merge(pop,prob.out,by="CTFIPS",all=TRUE),by="CTFIPS",all=TRUE)
   dbWriteTable(db,name="tracts",value=tracts,row.names=FALSE,overwrite=TRUE)
 }
 update.population(geo.file="2021_Gaz_tracts_national.txt",
   pop.file="DECENNIALDP2020.DP1-Data.csv",
-  prob.file="excprob_2019_2021.Rdata",
-  no2.file="ct2020avg_spmod_preds.csv")
+  prob.file="excprob_2020_2022.Rdata")
 
 #########################################################################
 ## Step 3: Retrieve data from AQS to update the remaining database tables
