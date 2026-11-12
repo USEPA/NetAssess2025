@@ -9,7 +9,7 @@ Based on the NetAssess app from LADCO (https://ladco.shinyapps.io/NetAssessApp/)
 
 Author: Ben Wells, US EPA
 
-Latest Update: November 5, 2026
+Latest Update: November 12, 2026
 
 ## Description
 
@@ -22,12 +22,13 @@ This repository contains the source code and other files for the NetAssess2025 R
 2. `server.R` - R shiny server-side functions that control how data processing is handled in the app.
 3. `deploy.R` - Deployment script for Posit Connect deployments to the staging server only.
 4. `updatedb.R` - Script used to refresh the app data in `netassess.sqlite`. Provided for developers only, not needed to run the app.
-5. `www/index.html` - Primary script controlling the user-interface.
-6. `www/css/` - Folder containing CSS scripts used in the app.
-7. `www/data/` - Folder containing data files used in the app.
-8. `www/fonts/` - Folder containing custom fonts used in the app.
-9. `www/images/` - Folder containing images used in the app.
-10. `www/js` - Folder containing Javascript scripts used in the app.
+5. `excprobs.R` - Script used to generate the ozone and PM2.5 exceedance probability layers. Provided for developers only, not needed to run the app.
+6. `www/index.html` - Primary script controlling the user-interface.
+7. `www/css/` - Folder containing CSS scripts used in the app.
+8. `www/data/` - Folder containing data files used in the app.
+9. `www/fonts/` - Folder containing custom fonts used in the app.
+10. `www/images/` - Folder containing images used in the app.
+11. `www/js` - Folder containing Javascript scripts used in the app.
 
 ## Requirements and credentials needed
 The app requires the R packages data.table, deldir, plyr, reshape2, RSQLite, sf, stringr, and shiny; deploy.R additionally requires rsconnect and Git.
@@ -38,6 +39,8 @@ The data refresh script, `updatedb.R` uses environment variables `AQS_userid` an
 
 ## How to refresh the supporting data
 The data file `NetAssess.sqlite` is not available in this repository but can be obtained by contacting the app author at Wells.Benjamin@epa.gov. The script `updatedb.R` can also be used to create this file. The script primarily retrieves AQS data and stores it in database tables, but it also pulls from some U.S. Census Bureau datasets, which must be downloaded manually. Download instructions are contained in the `updatedb.R` script.
+
+Additionally, the script `excprobs.r` can be used to download the most recent Downscaler data, run bootstrapping simulations, and produce the ozone and PM2.5 exceedance probability layers in the app. This script is very computationally intensive and usually takes several hours to run.
 
 ## How to get this application running locally
 1. Clone this repository to your local machine.
